@@ -43,6 +43,7 @@ func NewBadgerStore(participants *peers.Peers, cacheSize int, path string) (*Bad
 		inmemStore:   inmemStore,
 		db:           handle,
 		path:         path,
+		needBoostrap: false,
 	}
 	if err := store.dbSetParticipants(participants); err != nil {
 		return nil, err

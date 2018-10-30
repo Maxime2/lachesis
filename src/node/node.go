@@ -106,7 +106,20 @@ func (n *Node) Init() error {
 		}
 	}
 
-	return n.core.SetHeadAndSeq()
+	err := n.core.SetHeadAndSeq()
+	if err != nil {
+		return err
+	}
+
+	if !n.needBoostrap {
+		// Insert SelfEventBlock for the root for new database created
+		err := n.core.AddSelfEventBlock("")
+		if err != nil {
+			return err
+		}
+	}
+
+	return n.core.RunConsensus()
 }
 
 func (n *Node) RunAsync(gossip bool) {
@@ -550,6 +563,7 @@ func (n *Node) sync(events []poset.WireEvent) error {
 	elapsed := time.Since(start)
 	n.logger.WithField("Duration", elapsed.Nanoseconds()).Debug("n.core.Sync(events)")
 	if err != nil {
+		fmt.Println("++core.Sync()")
 		return err
 	}
 
@@ -559,6 +573,7 @@ func (n *Node) sync(events []poset.WireEvent) error {
 	elapsed = time.Since(start)
 	n.logger.WithField("Duration", elapsed.Nanoseconds()).Debug("n.core.RunConsensus()")
 	if err != nil {
+		fmt.Println("++core.RunConsensus()")
 		return err
 	}
 

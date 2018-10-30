@@ -418,6 +418,10 @@ func (p *Poset) checkSelfParent(event Event) error {
 	selfParentLegit := selfParent == creatorLastKnown
 
 	if !selfParentLegit {
+		fmt.Println("RRRRR checkSelfParent()  selfParent= " + selfParent + "; creatorLastKnown= " + creatorLastKnown)
+		for i := range p.Store.KnownEvents() {
+			fmt.Printf("RRRRR \t checkSelfParent() : creator %v has known_event %v\n", creator, i);
+		}
 		return fmt.Errorf("Self-parent not last known event by creator")
 	}
 
@@ -661,12 +665,17 @@ func (p *Poset) setWireInfo(event *Event) error {
 	if lf, isRoot, _ := p.Store.LastEventFrom(event.Creator()); isRoot && lf == event.SelfParent() {
 		root, err := p.Store.GetRoot(event.Creator())
 		if err != nil {
+			fmt.Println("**GetRoot error=", err.Error())
 			return err
 		}
 		selfParentIndex = root.SelfParent.Index
 	} else {
+		fmt.Println("**isRoot=", isRoot,
+			" lf=", lf,
+			" event.SelfParent=", event.SelfParent())
 		selfParent, err := p.Store.GetEvent(event.SelfParent())
 		if err != nil {
+			fmt.Println("**GetEvent error=", err.Error())
 			return err
 		}
 		selfParentIndex = selfParent.Index()
@@ -676,6 +685,7 @@ func (p *Poset) setWireInfo(event *Event) error {
 		//Check Root then regular Events
 		root, err := p.Store.GetRoot(event.Creator())
 		if err != nil {
+			fmt.Println("**GetRoot Other error=", err.Error())
 			return err
 		}
 		if other, ok := root.Others[event.Hex()]; ok && other.Hash == event.OtherParent() {
@@ -684,6 +694,7 @@ func (p *Poset) setWireInfo(event *Event) error {
 		} else {
 			otherParent, err := p.Store.GetEvent(event.OtherParent())
 			if err != nil {
+				fmt.Println("**GetEvent Other error=", err.Error())
 				return err
 			}
 			otherParentCreatorID = p.Participants.ByPubKey[otherParent.Creator()].ID
@@ -691,6 +702,11 @@ func (p *Poset) setWireInfo(event *Event) error {
 		}
 	}
 
+	fmt.Println("**setWireInfo:selfParentIndex=", selfParentIndex,
+		" otherParentCreatorID=", otherParentCreatorID,
+		" otherParentIndex=", otherParentIndex,
+		" ID=", p.Participants.ByPubKey[event.Creator()].ID)
+	
 	event.SetWireInfo(selfParentIndex,
 		otherParentCreatorID,
 		otherParentIndex,
@@ -733,8 +749,12 @@ func (p *Poset) InsertEvent(event Event, setWireInfo bool) error {
 		return fmt.Errorf("Invalid Event signature")
 	}
 
-	if err := p.checkSelfParent(event); err != nil {
-		return fmt.Errorf("CheckSelfParent: %s", err)
+	if p.topologicalIndex > 0 {
+		if err := p.checkSelfParent(event); err != nil {
+			fmt.Println("**p.topologicalIndex=", p.topologicalIndex)
+			fmt.Println("**event=", event) 
+			return fmt.Errorf("CheckSelfParent: %s", err)
+		}
 	}
 
 	if err := p.checkOtherParent(event); err != nil {
@@ -1100,6 +1120,7 @@ func (p *Poset) ProcessDecidedRounds() error {
 				if err != nil {
 					return err
 				}
+				fmt.Println("@@p.ConsensusTransactions=", p.ConsensusTransactions, " + ", len(e.Transactions()))
 				p.ConsensusTransactions += uint64(len(e.Transactions()))
 				if e.IsLoaded() {
 					p.PendingLoadedEvents--
