@@ -1,31 +1,49 @@
 image: offscale/golang-builder-alpine3.8
 
+variables:
+  SONAR_SCANNER_VERSION: "sonar-scanner-cli-3.2.0.1227-linux"
+
 stages:
+  - sonar
   - test
   - build
+  - deploy
   
 before_script:
-    - mkdir -p /go/src/github.com/SamuelMarks/
-    - cp -r /mirrors/lachesis /go/src/github.com/SamuelMarks/lachesis
-    - ls /go/src/github.com/SamuelMarks/
-    - ls /go/src/github.com/SamuelMarks/lachesis
+    - apk update
+    - apk add jq util-linux
     - go get -v github.com/SamuelMarks/batch-ethkey
     - go get -u -d github.com/magefile/mage
-    - cd /go/src/github.com/SamuelMarks/lachesis
-    - rm -rf /go/src/github.com/andrecronje
-    - ln -s /go/src/github.com/SamuelMarks /go/src/github.com/andrecronje
-    - ls -a /go/src/github.com
+    - mkdir -p /go/src/github.com/andrecronje/lachesis
+    - git clone https://github.com/SamuelMarks/lachesis /go/src/github.com/andrecronje/lachesis
+    # cp -r /fantom/lachesis /go/src/github.com/andrecronje/lachesis
+    - cd /go/src/github.com/andrecronje/lachesis
     - glide install
-    
+
+sonar scan:
+  stage: sonar
+  image: gitlab.fantom.technology:4567/fantom/lachesis/sonar_scanner:latest
+  allow_failure: true
+  script:
+    - export PATH=$PATH:/root/sonar-scanner/bin; sonar-scanner
+
 test code:
   stage: test
   allow_failure: true
   script:
-    - cd /go/src/github.com/SamuelMarks/lachesis
-    - make test
+  - cd /go/src/github.com/andrecronje/lachesis
+  - go test ./src/...
     
 build code:
   stage: build
   script:
-    - cd /go/src/github.com/SamuelMarks/lachesis/scripts
-    - ./multi_build.bash
+  - cd /go/src/github.com/andrecronje/lachesis
+  - scripts/multi_build.bash
+
+deploy code:
+  stage: deploy
+  script:
+  - cd /go/src/github.com/andrecronje/lachesis
+  - scripts/multi_build.bash
+  - mv lachesis_linux scripts/
+  - scripts/multi_run.bash
