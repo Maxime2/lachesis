@@ -7,6 +7,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"sync"
 
 	"github.com/sirupsen/logrus"
 
@@ -28,6 +29,7 @@ type Poset struct {
 	LastCommitedRoundEvents int              //number of events in round before LastConsensusRound
 	SigPool                 []BlockSignature //Pool of Block signatures that need to be processed
 	ConsensusTransactions   uint64           //number of consensus transactions
+	ConsensusMu             sync.RWMutex     // mutex to access ConsensusTransactions
 	PendingLoadedEvents     int              //number of loaded events that are not yet committed
 	commitCh                chan Block       //channel for committing Blocks
 	topologicalIndex        int              //counter used to order events in topological order (only local)
@@ -1109,7 +1111,9 @@ func (p *Poset) ProcessDecidedRounds() error {
 				if err != nil {
 					return err
 				}
+				p.ConsensusMu.Lock()
 				p.ConsensusTransactions += uint64(len(e.Transactions()))
+				p.ConsensusMu.Unlock()
 				if e.IsLoaded() {
 					p.PendingLoadedEvents--
 				}

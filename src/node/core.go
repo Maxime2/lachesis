@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -29,6 +30,7 @@ type Core struct {
 	Seq          int
 
 	transactionPool    [][]byte
+	transactionMu      sync.RWMutex
 	blockSignaturePool []poset.BlockSignature
 
 	logger *logrus.Entry
@@ -283,12 +285,14 @@ func (c *Core) EventDiff(known map[int]int) (events []poset.Event, err error) {
 
 func (c *Core) Sync(unknownEvents []poset.WireEvent) error {
 
+	c.transactionMu.RLock()
 	c.logger.WithFields(logrus.Fields{
 		"unknown_events":       len(unknownEvents),
 		"transaction_pool":     len(c.transactionPool),
 		"block_signature_pool": len(c.blockSignaturePool),
 		"c.poset.PendingLoadedEvents": c.poset.PendingLoadedEvents,
 	}).Debug("Sync(unknownEventBlocks []poset.EventBlock)")
+	c.transactionMu.RUnlock()
 
 	otherHead := ""
 	// add unknown events
@@ -311,6 +315,8 @@ func (c *Core) Sync(unknownEvents []poset.WireEvent) error {
 
 	// create new event with self head and other head only if there are pending
 	// loaded events or the pools are not empty
+	c.transactionMu.RLock()
+	defer c.transactionMu.RUnlock()
 	if c.poset.PendingLoadedEvents > 0 ||
 		len(c.transactionPool) > 0 ||
 		len(c.blockSignaturePool) > 0 {
@@ -484,17 +490,21 @@ func (c *Core) RunConsensus() error {
 		return err
 	}
 
+	c.transactionMu.RLock()
 	c.logger.WithFields(logrus.Fields{
 		"transaction_pool":     len(c.transactionPool),
 		"block_signature_pool": len(c.blockSignaturePool),
 		"c.poset.PendingLoadedEvents": c.poset.PendingLoadedEvents,
 	}).Debug("c.RunConsensus()")
+	c.transactionMu.RUnlock()
 
 	return nil
 }
 
 func (c *Core) AddTransactions(txs [][]byte) {
+	c.transactionMu.Lock()
 	c.transactionPool = append(c.transactionPool, txs...)
+	c.transactionMu.Unlock()
 }
 
 func (c *Core) AddBlockSignature(bs poset.BlockSignature) {
@@ -552,6 +562,8 @@ func (c *Core) GetLastConsensusRoundIndex() *int {
 }
 
 func (c *Core) GetConsensusTransactionsCount() uint64 {
+	c.poset.ConsensusMu.RLock()
+	defer c.poset.ConsensusMu.RUnlock()
 	return c.poset.ConsensusTransactions
 }
 

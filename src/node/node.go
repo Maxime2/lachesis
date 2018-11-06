@@ -3,6 +3,7 @@ package node
 import (
 	"crypto/ecdsa"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -145,14 +146,16 @@ func (n *Node) Run(gossip bool) {
 }
 
 func (n *Node) resetTimer() {
-	if !n.controlTimer.set {
+	if !n.controlTimer.GetSet() {
 		ts := n.conf.HeartbeatTimeout
+		n.core.transactionMu.RLock()
  		//Slow gossip if nothing interesting to say
 		if n.core.poset.PendingLoadedEvents == 0 &&
 			len(n.core.transactionPool) == 0 &&
 			len(n.core.blockSignaturePool) == 0 {
 			ts = time.Duration(time.Second)
 		}
+		n.core.transactionMu.RUnlock()
  		n.controlTimer.resetCh <- ts
 	}
 }
@@ -408,6 +411,8 @@ func (n *Node) pull(peerAddr string) (syncLimit bool, otherKnownEvents map[int]i
 	n.coreLock.Unlock()
 	if err != nil {
 		n.logger.WithField("error", err).Error("n.sync(resp.Events)")
+		n.PrintStat()
+		os.Exit(234)
 		return false, nil, err
 	}
 
@@ -453,6 +458,8 @@ func (n *Node) push(peerAddr string, knownEvents map[int]int) error {
 		n.logger.WithField("Duration", elapsed.Nanoseconds()).Debug("n.requestEagerSync(peerAddr, wireEvents)")
 		if err != nil {
 			n.logger.WithField("Error", err).Error("n.requestEagerSync(peerAddr, wireEvents)")
+			n.PrintStat()
+			os.Exit(234)
 			return err
 		}
 		n.logger.WithFields(logrus.Fields{
@@ -665,6 +672,7 @@ func (n *Node) GetStats() map[string]string {
 		consensusRoundsPerSecond = float64(*lastConsensusRound) / timeElapsed.Seconds()
 	}
 
+	n.core.transactionMu.RLock()
 	s := map[string]string{
 		"last_consensus_round":    toString(lastConsensusRound),
 		"time_elapsed":            strconv.FormatFloat(timeElapsed.Seconds(), 'f', 2, 64),
@@ -686,6 +694,7 @@ func (n *Node) GetStats() map[string]string {
 		"id":                      strconv.Itoa(n.id),
 		"state":                   n.getState().String(),
 	}
+	n.core.transactionMu.RUnlock()
 	// n.mqtt.FireEvent(s, "/mq/lachesis/stats")
 	return s
 }

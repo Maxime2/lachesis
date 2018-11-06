@@ -2,6 +2,7 @@ package node
 
 import (
 	"math/rand"
+	"sync"
 
 	"github.com/andrecronje/lachesis/src/peers"
 )
@@ -22,6 +23,7 @@ type RandomPeerSelector struct {
 	peers     *peers.Peers
 	localAddr string
 	last      string
+	accessMu  sync.RWMutex
 }
 
 func NewRandomPeerSelector(participants *peers.Peers, localAddr string) *RandomPeerSelector {
@@ -36,6 +38,8 @@ func (ps *RandomPeerSelector) Peers() *peers.Peers {
 }
 
 func (ps *RandomPeerSelector) UpdateLast(peer string) {
+	ps.accessMu.Lock()
+	defer ps.accessMu.Unlock()
 	ps.last = peer
 }
 
@@ -46,7 +50,10 @@ func (ps *RandomPeerSelector) Next() *peers.Peer {
 		_, selectablePeers = peers.ExcludePeer(selectablePeers, ps.localAddr)
 
 		if len(selectablePeers) > 1 {
-			_, selectablePeers = peers.ExcludePeer(selectablePeers, ps.last)
+			ps.accessMu.RLock()
+			_, selectablePeers = peers.ExcludePeer(selectablePeers,
+				ps.last)
+			ps.accessMu.RUnlock()
 		}
 	}
 
