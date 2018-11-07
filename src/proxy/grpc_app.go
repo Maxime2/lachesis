@@ -152,6 +152,12 @@ func (p *GrpcAppProxy) SubmitCh() chan []byte {
 	return p.event4server
 }
 
+// SubmitCh implements AppProxy interface method
+// TODO: Incorrect implementation, just adding to the interface so long
+func (p *GrpcAppProxy) SubmitInternalCh() chan poset.InternalTransaction {
+	return nil
+}
+
 // CommitBlock implements AppProxy interface method
 func (p *GrpcAppProxy) CommitBlock(block poset.Block) ([]byte, error) {
 	data, err := block.Marshal()
@@ -170,8 +176,8 @@ func (p *GrpcAppProxy) CommitBlock(block poset.Block) ([]byte, error) {
 }
 
 // GetSnapshot implements AppProxy interface method
-func (p *GrpcAppProxy) GetSnapshot(blockIndex int) ([]byte, error) {
-	answer, ok := <-p.push_query(int64(blockIndex))
+func (p *GrpcAppProxy) GetSnapshot(blockIndex int64) ([]byte, error) {
+	answer, ok := <-p.push_query(blockIndex)
 	if !ok {
 		return nil, ErrNoAnswers
 	}

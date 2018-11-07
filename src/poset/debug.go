@@ -10,7 +10,8 @@ import (
 func (p *Poset) PrintStat() {
 	fmt.Println("****Known events:");
 	for pid_id, index := range p.Store.KnownEvents() {
-		fmt.Println("    pid.ID=", pid_id, " index=", index)
+		fmt.Println("    index=", index, " peer=", p.Participants.ById[int64(pid_id)].NetAddr,
+			" pubKeyHex=", p.Participants.ById[int64(pid_id)].PubKeyHex)
 	}
 }
 
