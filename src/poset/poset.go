@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"math"
 	"sort"
-	"strconv"
 	"sync"
 
 	"github.com/sirupsen/logrus"
@@ -30,12 +29,14 @@ type Poset struct {
 	LastCommitedRoundEvents int              //number of events in round before LastConsensusRound
 	SigPool                 []BlockSignature //Pool of Block signatures that need to be processed
 	ConsensusTransactions   uint64           //number of consensus transactions
-	ConsensusMu             sync.RWMutex     // mutex to access ConsensusTransactions
 	PendingLoadedEvents     int              //number of loaded events that are not yet committed
 	commitCh                chan Block       //channel for committing Blocks
 	topologicalIndex        int64            //counter used to order events in topological order (only local)
 	superMajority           int
 	trustCount              int
+
+	consensusAccessMu       sync.RWMutex     // mutex to access ConsensusTransactions
+	undeterminedAccessMu    sync.RWMutex     // mutex to access UndeterminedEvents
 
 	ancestorCache     *common.LRU
 	selfAncestorCache *common.LRU
@@ -1119,9 +1120,9 @@ func (p *Poset) ProcessDecidedRounds() error {
 				if err != nil {
 					return err
 				}
-				p.ConsensusMu.Lock()
+				p.consensusAccessMu.Lock()
 				p.ConsensusTransactions += uint64(len(e.Transactions()))
-				p.ConsensusMu.Unlock()
+				p.consensusAccessMu.Unlock()
 				if e.IsLoaded() {
 					p.PendingLoadedEvents--
 				}
@@ -1553,6 +1554,15 @@ func (p *Poset) CheckBlock(block Block) error {
 
 	p.logger.WithField("valid_signatures", validSignatures).Debug("CheckBlock")
 	return nil
+}
+
+/*******************************************************************************
+Getters
+*******************************************************************************/
+func (p *Poset) GetConsensusTransactionsCount() uint64 {
+	p.consensusAccessMu.RLock()
+	defer p.consensusAccessMu.RUnlock()
+	return p.ConsensusTransactions
 }
 
 /*******************************************************************************

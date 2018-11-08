@@ -704,7 +704,7 @@ func (n *Node) GetStats() map[string]string {
 		"consensus_events":        strconv.FormatInt(consensusEvents, 10),
 		"sync_limit":              strconv.FormatInt(n.conf.SyncLimit, 10),
 		"consensus_transactions":  strconv.FormatUint(consensusTransactions, 10),
-		"undetermined_events":     strconv.Itoa(len(n.core.GetUndeterminedEvents())),
+		"undetermined_events":     strconv.Itoa(n.core.GetUndeterminedEventsCount()),
 		"transaction_pool":        strconv.Itoa(len(n.core.transactionPool)),
 		"num_peers":               strconv.Itoa(n.peerSelector.Peers().Len()),
 		"sync_rate":               strconv.FormatFloat(n.SyncRate(), 'f', 2, 64),
