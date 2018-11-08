@@ -3,7 +3,7 @@ package node
 import (
 	"crypto/ecdsa"
 	"fmt"
-	"os"
+//	"os"
 	"sync"
 	"time"
 
@@ -155,14 +155,12 @@ func (n *Node) Run(gossip bool) {
 func (n *Node) resetTimer() {
 	if !n.controlTimer.GetSet() {
 		ts := n.conf.HeartbeatTimeout
-		n.core.transactionMu.RLock()
  		//Slow gossip if nothing interesting to say
 		if n.core.poset.PendingLoadedEvents == 0 &&
-			len(n.core.transactionPool) == 0 &&
-			len(n.core.blockSignaturePool) == 0 {
+			n.core.GetTransactionPoolCount() == 0 &&
+			n.core.GetBlockSignaturePoolCount() == 0 {
 			ts = time.Duration(time.Second)
 		}
-		n.core.transactionMu.RUnlock()
  		n.controlTimer.resetCh <- ts
 	}
 }
@@ -423,8 +421,8 @@ func (n *Node) pull(peerAddr string) (syncLimit bool, otherKnownEvents map[int64
 	n.coreLock.Unlock()
 	if err != nil {
 		n.logger.WithField("error", err).Error("n.sync(resp.Events)")
-		n.PrintStat()
-		os.Exit(234)
+//		n.PrintStat()
+//		os.Exit(234)
 		return false, nil, err
 	}
 
@@ -471,8 +469,8 @@ func (n *Node) push(peerAddr string, knownEvents map[int64]int64) error {
 		n.logger.WithField("Duration", elapsed.Nanoseconds()).Debug("n.requestEagerSync(peerAddr, wireEvents)")
 		if err != nil {
 			n.logger.WithField("Error", err).Error("n.requestEagerSync(peerAddr, wireEvents)")
-			n.PrintStat()
-			os.Exit(234)
+//			n.PrintStat()
+//			os.Exit(234)
 			return err
 		}
 		n.logger.WithFields(logrus.Fields{
@@ -694,7 +692,6 @@ func (n *Node) GetStats() map[string]string {
 		consensusRoundsPerSecond = float64(*lastConsensusRound) / timeElapsed.Seconds()
 	}
 
-	n.core.transactionMu.RLock()
 	s := map[string]string{
 		"last_consensus_round":    toString(lastConsensusRound),
 		"time_elapsed":            strconv.FormatFloat(timeElapsed.Seconds(), 'f', 2, 64),
@@ -705,8 +702,8 @@ func (n *Node) GetStats() map[string]string {
 		"consensus_events":        strconv.FormatInt(consensusEvents, 10),
 		"sync_limit":              strconv.FormatInt(n.conf.SyncLimit, 10),
 		"consensus_transactions":  strconv.FormatUint(consensusTransactions, 10),
-		"undetermined_events":     strconv.Itoa(n.core.GetUndeterminedEventsCount()),
-		"transaction_pool":        strconv.Itoa(len(n.core.transactionPool)),
+		"undetermined_events":     strconv.FormatUint(n.core.GetUndeterminedEventsCount(), 10),
+		"transaction_pool":        strconv.FormatUint(n.core.GetTransactionPoolCount(), 10),
 		"num_peers":               strconv.Itoa(n.peerSelector.Peers().Len()),
 		"sync_rate":               strconv.FormatFloat(n.SyncRate(), 'f', 2, 64),
 		"transactions_per_second": strconv.FormatFloat(transactionsPerSecond, 'f', 2, 64),
@@ -716,7 +713,6 @@ func (n *Node) GetStats() map[string]string {
 		"id":                      strconv.FormatInt(n.id, 10),
 		"state":                   n.getState().String(),
 	}
-	n.core.transactionMu.RUnlock()
 	// n.mqtt.FireEvent(s, "/mq/lachesis/stats")
 	return s
 }

@@ -781,7 +781,9 @@ func (p *Poset) InsertEvent(event Event, setWireInfo bool) error {
 		return fmt.Errorf("SetEvent: %s", err)
 	}
 
+	p.undeterminedAccessMu.Lock()
 	p.UndeterminedEvents = append(p.UndeterminedEvents, event.Hex())
+	p.undeterminedAccessMu.Unlock()
 
 	if event.IsLoaded() {
 		p.PendingLoadedEvents++
@@ -989,6 +991,7 @@ func (p *Poset) DecideRoundReceived() error {
 	   unique famous witnesses have received it, if all earlier rounds have the
 	   fame of all witnesses decided"
 	*/
+	p.undeterminedAccessMu.RLock()
 	for _, x := range p.UndeterminedEvents {
 
 		received := false
@@ -1061,8 +1064,11 @@ func (p *Poset) DecideRoundReceived() error {
 			newUndeterminedEvents = append(newUndeterminedEvents, x)
 		}
 	}
+	p.undeterminedAccessMu.RUnlock()
 
+	p.undeterminedAccessMu.Lock()
 	p.UndeterminedEvents = newUndeterminedEvents
+	p.undeterminedAccessMu.Unlock()
 
 	return nil
 }
@@ -1367,7 +1373,9 @@ func (p *Poset) Reset(block Block, frame Frame) error {
 	p.FirstConsensusRound = nil
 	p.AnchorBlock = nil
 
+	p.undeterminedAccessMu.Lock()
 	p.UndeterminedEvents = []string{}
+	p.undeterminedAccessMu.Unlock()
 	p.PendingRounds = []*pendingRound{}
 	p.PendingLoadedEvents = 0
 	p.topologicalIndex = 0
@@ -1562,6 +1570,12 @@ func (p *Poset) GetConsensusTransactionsCount() uint64 {
 	p.consensusAccessMu.RLock()
 	defer p.consensusAccessMu.RUnlock()
 	return p.ConsensusTransactions
+}
+
+func (p *Poset) GetUndeterminedEventsCount() uint64 {
+	p.undeterminedAccessMu.RLock()
+	defer p.undeterminedAccessMu.RUnlock()
+	return uint64(len(p.UndeterminedEvents))
 }
 
 /*******************************************************************************

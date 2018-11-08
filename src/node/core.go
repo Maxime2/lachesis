@@ -29,10 +29,12 @@ type Core struct {
 	Head         string
 	Seq          int64
 
-	transactionPool         [][]byte
-	transactionAccessMu     sync.RWMutex
-	internalTransactionPool []poset.InternalTransaction
-	blockSignaturePool      []poset.BlockSignature
+	transactionPool             [][]byte
+	transactionAccessMu         sync.RWMutex
+	internalTransactionPool     []poset.InternalTransaction
+	internalTransactionAccessMu sync.RWMutex
+	blockSignaturePool          []poset.BlockSignature
+	blockSignatureAccessMu      sync.RWMutex
 
 	logger *logrus.Entry
 
@@ -307,9 +309,9 @@ func (c *Core) Sync(unknownEvents []poset.WireEvent) error {
 	c.transactionAccessMu.RLock()
 	c.logger.WithFields(logrus.Fields{
 		"unknown_events":              len(unknownEvents),
-		"transaction_pool":            len(c.transactionPool),
-		"internal_transaction_pool":   len(c.internalTransactionPool),
-		"block_signature_pool":        len(c.blockSignaturePool),
+		"transaction_pool":            c.GetTransactionPoolCount(),
+		"internal_transaction_pool":   c.GetInternalTransactionPoolCount(),
+		"block_signature_pool":        c.GetBlockSignaturePoolCount(),
 		"c.poset.PendingLoadedEvents": c.poset.PendingLoadedEvents,
 	}).Debug("Sync(unknownEventBlocks []poset.EventBlock)")
 	c.transactionAccessMu.RUnlock()
@@ -338,12 +340,10 @@ func (c *Core) Sync(unknownEvents []poset.WireEvent) error {
 
 	// create new event with self head and other head only if there are pending
 	// loaded events or the pools are not empty
-	c.transactionAccessMu.RLock()
-	defer c.transactionAccessMu.RUnlock()
 	if c.poset.PendingLoadedEvents > 0 ||
-		len(c.transactionPool) > 0 ||
-		len(c.internalTransactionPool) > 0 ||
-		len(c.blockSignaturePool) > 0 {
+		c.GetTransactionPoolCount() > 0 ||
+		c.GetInternalTransactionPoolCount() > 0 ||
+		c.GetBlockSignaturePoolCount() > 0 {
 		return c.AddSelfEventBlock(otherHead)
 	}
 	return nil
@@ -384,7 +384,7 @@ func (c *Core) FastForward(peer string, block poset.Block, frame poset.Frame) er
 	return nil
 }
 
-func min(a, b int) int {
+func min(a, b uint64) uint64 {
 	if a < b {
 		return a
 	}
@@ -427,7 +427,7 @@ func (c *Core) AddSelfEventBlock(otherHead string) error {
 	// create new event with self head and empty other parent
 	// empty transaction pool in its payload
 	var batch [][]byte
-	nTxs := min(len(c.transactionPool), c.maxTransactionsInEvent)
+	nTxs := min(c.GetTransactionPoolCount(), uint64(c.maxTransactionsInEvent))
 	batch = c.transactionPool[0:nTxs:nTxs]
 	newHead := poset.NewEvent(batch,
 		c.internalTransactionPool,
@@ -444,14 +444,16 @@ func (c *Core) AddSelfEventBlock(otherHead string) error {
 	c.internalTransactionPool = []poset.InternalTransaction{}
 	// retain c.blockSignaturePool until c.transactionPool is empty
 	// FIXIT: is there any better strategy?
-	if len(c.transactionPool) == 0 {
+	if c.GetTransactionPoolCount() == 0 {
+		c.blockSignatureAccessMu.Lock()
 		c.blockSignaturePool = []poset.BlockSignature{}
+		c.blockSignatureAccessMu.Unlock()
 	}
 
 	c.logger.WithFields(logrus.Fields{
-		"transactions":          len(c.transactionPool),
-		"internal_transactions": len(c.internalTransactionPool),
-		"block_signatures":      len(c.blockSignaturePool),
+		"transactions":          c.GetTransactionPoolCount(),
+		"internal_transactions": c.GetInternalTransactionPoolCount(),
+		"block_signatures":      c.GetBlockSignaturePoolCount(),
 	}).Debug("newHead := poset.NewEventBlock")
 
 	return nil
@@ -518,29 +520,31 @@ func (c *Core) RunConsensus() error {
 		return err
 	}
 
-	c.transactionMu.RLock()
 	c.logger.WithFields(logrus.Fields{
-		"transaction_pool":            len(c.transactionPool),
-		"block_signature_pool":        len(c.blockSignaturePool),
+		"transaction_pool":            c.GetTransactionPoolCount(),
+		"block_signature_pool":        c.GetBlockSignaturePoolCount(),
 		"c.poset.PendingLoadedEvents": c.poset.PendingLoadedEvents,
 	}).Debug("c.RunConsensus()")
-	c.transactionMu.RUnlock()
 
 	return nil
 }
 
 func (c *Core) AddTransactions(txs [][]byte) {
-	c.transactionMu.Lock()
+	c.transactionAccessMu.Lock()
 	c.transactionPool = append(c.transactionPool, txs...)
-	c.transactionMu.Unlock()
+	c.transactionAccessMu.Unlock()
 }
 
 func (c *Core) AddInternalTransactions(txs []poset.InternalTransaction) {
+	c.internalTransactionAccessMu.Lock()
 	c.internalTransactionPool = append(c.internalTransactionPool, txs...)
+	c.internalTransactionAccessMu.Unlock()
 }
 
 func (c *Core) AddBlockSignature(bs poset.BlockSignature) {
+	c.blockSignatureAccessMu.Lock()
 	c.blockSignaturePool = append(c.blockSignaturePool, bs)
+	c.blockSignatureAccessMu.Unlock()
 }
 
 func (c *Core) GetHead() (poset.Event, error) {
@@ -565,7 +569,7 @@ func (c *Core) GetConsensusEvents() []string {
 	return c.poset.Store.ConsensusEvents()
 }
 
-func (c *Core) GetConsensusEventsCount() uint64 {
+func (c *Core) GetConsensusEventsCount() int64 {
 	return c.poset.Store.ConsensusEventsCount()
 }
 
@@ -574,9 +578,7 @@ func (c *Core) GetUndeterminedEvents() []string {
 }
 
 func (c *Core) GetUndeterminedEventsCount() uint64 {
-	c.poset.undeterminedAccessMu.RLock()
-	defer c.poset.undeterminedAccessMu.RUnlock()
-	return len(c.poset.UndeterminedEvents)
+	return c.poset.GetUndeterminedEventsCount()
 }
 
 func (c *Core) GetPendingLoadedEvents() int {
@@ -609,4 +611,22 @@ func (c *Core) GetLastCommittedRoundEventsCount() int {
 
 func (c *Core) GetLastBlockIndex() int64 {
 	return c.poset.Store.LastBlockIndex()
+}
+
+func (c *Core) GetTransactionPoolCount() uint64 {
+	c.transactionAccessMu.RLock()
+	defer c.transactionAccessMu.RUnlock()
+	return uint64(len(c.transactionPool))
+}
+
+func (c *Core) GetInternalTransactionPoolCount() uint64 {
+	c.internalTransactionAccessMu.RLock()
+	defer c.internalTransactionAccessMu.RUnlock()
+	return uint64(len(c.internalTransactionPool))
+}
+
+func (c *Core) GetBlockSignaturePoolCount() uint64 {
+	c.blockSignatureAccessMu.RLock()
+	defer c.blockSignatureAccessMu.RUnlock()
+	return uint64(len(c.blockSignaturePool))
 }
