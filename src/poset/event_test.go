@@ -183,7 +183,7 @@ func TestEventFlagTable(t *testing.T) {
 		"z": 2,
 	}
 
-	event := NewEvent(nil, nil, []string{"p1", "p2"}, []byte("creator"), 1, exp)
+	event := NewEvent(nil, nil, nil, []string{"p1", "p2"}, []byte("creator"), 1, exp)
 	if event.IsLoaded() {
 		t.Fatalf("IsLoaded() should return false for nil Body.Transactions and Body.BlockSignatures")
 	}
@@ -207,6 +207,8 @@ func TestMergeFlagTable(t *testing.T) {
 		"x": 1,
 		"y": 1,
 		"z": 1,
+
+
 	}
 
 	syncData := []map[string]int64{

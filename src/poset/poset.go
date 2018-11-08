@@ -1,9 +1,9 @@
 package poset
 
 import (
+	"crypto/ecdsa"
 	"encoding/hex"
 	"errors"
-	"crypto/ecdsa"
 	"fmt"
 	"math"
 	"sort"
@@ -77,7 +77,7 @@ func NewPoset(participants *peers.Peers, store Store, commitCh chan Block, logge
 
 	participants.OnNewPeer(func(peer *peers.Peer) {
 		poset.superMajority = 2*participants.Len()/3 + 1
- 		poset.trustCount = int(math.Ceil(float64(participants.Len()) / float64(3)))
+		poset.trustCount = int(math.Ceil(float64(participants.Len()) / float64(3)))
 	})
 
 	return &poset
@@ -113,17 +113,17 @@ func (p *Poset) ancestor2(x, y string) (bool, error) {
 	ex, err := p.Store.GetEvent(x)
 	if err != nil {
 		roots, err2 := p.Store.RootsBySelfParent()
- 		if err2 != nil {
+		if err2 != nil {
 			return false, err2
 		}
- 		for _, root := range roots {
+		for _, root := range roots {
 			if other, ok := root.Others[y]; ok {
 				return other.Hash == x, nil
 			}
 		}
- 		return false, nil
+		return false, nil
 	}
- 	if lamportDiff, err := p.lamportTimestampDiff(x, y); err != nil || lamportDiff > 0 {
+	if lamportDiff, err := p.lamportTimestampDiff(x, y); err != nil || lamportDiff > 0 {
 		return false, err
 	}
 
@@ -131,12 +131,12 @@ func (p *Poset) ancestor2(x, y string) (bool, error) {
 	if err != nil {
 		// check y roots
 		roots, err2 := p.Store.RootsBySelfParent()
- 		if err2 != nil {
+		if err2 != nil {
 			return false, err2
 		}
- 		if root, ok := roots[y]; ok {
+		if root, ok := roots[y]; ok {
 			yCreator := p.Participants.ById[root.SelfParent.CreatorID].PubKeyHex
- 			if ex.Creator() == yCreator {
+			if ex.Creator() == yCreator {
 				return ex.Index() >= root.SelfParent.Index, nil
 			}
 		} else {
@@ -184,10 +184,10 @@ func (p *Poset) selfAncestor2(x, y string) (bool, error) {
 	ex, err := p.Store.GetEvent(x)
 	if err != nil {
 		roots, err := p.Store.RootsBySelfParent()
- 		if err != nil {
+		if err != nil {
 			return false, err
 		}
- 		if root, ok := roots[x]; ok {
+		if root, ok := roots[x]; ok {
 			if root.SelfParent.Hash == y {
 				return true, nil
 			}
@@ -198,12 +198,12 @@ func (p *Poset) selfAncestor2(x, y string) (bool, error) {
 	ey, err := p.Store.GetEvent(y)
 	if err != nil {
 		roots, err2 := p.Store.RootsBySelfParent()
- 		if err2 != nil {
+		if err2 != nil {
 			return false, err2
 		}
- 		if root, ok := roots[y]; ok {
+		if root, ok := roots[y]; ok {
 			yCreator := p.Participants.ById[root.SelfParent.CreatorID].PubKeyHex
- 			if ex.Creator() == yCreator {
+			if ex.Creator() == yCreator {
 				return ex.Index() >= root.SelfParent.Index, nil
 			}
 		}
@@ -487,14 +487,14 @@ func (p *Poset) lamportTimestamp2(x string) (int64, error) {
 // lamport(y) - lamport(x)
 func (p *Poset) lamportTimestampDiff(x, y string) (int64, error) {
 	xlt, err := p.lamportTimestamp(x)
- 	if err != nil {
+	if err != nil {
 		return 0, err
 	}
- 	ylt, err := p.lamportTimestamp(y)
- 	if err != nil {
+	ylt, err := p.lamportTimestamp(y)
+	if err != nil {
 		return 0, err
 	}
- 	return ylt - xlt, nil
+	return ylt - xlt, nil
 }
 
 //round(x) - round(y)
@@ -527,7 +527,6 @@ func (p *Poset) checkSelfParent(event Event) error {
 		"event":            event.Hex(),
 	}).Debugf("checkSelfParent")
 
-
 	if err != nil {
 		return err
 	}
@@ -535,7 +534,7 @@ func (p *Poset) checkSelfParent(event Event) error {
 	selfParentLegit := selfParent == creatorLastKnown
 
 	if !selfParentLegit {
-		return fmt.Errorf("Self-parent not last known event by creator")
+		return fmt.Errorf("self-parent not last known event by creator")
 	}
 
 	return nil
@@ -557,7 +556,7 @@ func (p *Poset) checkOtherParent(event Event) error {
 			if ok && other.Hash == event.OtherParent() {
 				return nil
 			}
-			return fmt.Errorf("Other-parent not known")
+			return fmt.Errorf("other-parent not known")
 		}
 	}
 	return nil
@@ -751,14 +750,14 @@ func (p *Poset) InsertEvent(event Event, setWireInfo bool) error {
 		}
 
 		p.logger.WithFields(logrus.Fields{
-			"event":         event,
-			"creator":       event.Creator(),
-			"selfParent":    event.SelfParent(),
-			"index":         event.Index(),
-			"hex":           event.Hex(),
+			"event":      event,
+			"creator":    event.Creator(),
+			"selfParent": event.SelfParent(),
+			"index":      event.Index(),
+			"hex":        event.Hex(),
 		}).Debugf("Invalid Event signature")
 
-		return fmt.Errorf("Invalid Event signature")
+		return fmt.Errorf("invalid Event signature")
 	}
 
 	if err := p.checkSelfParent(event); err != nil {
@@ -1099,7 +1098,7 @@ func (p *Poset) ProcessDecidedRounds() error {
 
 		frame, err := p.GetFrame(r.Index)
 		if err != nil {
-			return fmt.Errorf("Getting Frame %d: %v", r.Index, err)
+			return fmt.Errorf("getting Frame %d: %v", r.Index, err)
 		}
 
 		round, err := p.Store.GetRound(r.Index)
@@ -1344,7 +1343,7 @@ func (p *Poset) ProcessSigPool() error {
 func (p *Poset) GetAnchorBlockWithFrame() (Block, Frame, error) {
 
 	if p.AnchorBlock == nil {
-		return Block{}, Frame{}, fmt.Errorf("No Anchor Block")
+		return Block{}, Frame{}, fmt.Errorf("no Anchor Block")
 	}
 
 	block, err := p.Store.GetBlock(*p.AnchorBlock)
@@ -1459,7 +1458,7 @@ func (p *Poset) ReadWireInfo(wevent WireEvent) (*Event, error) {
 	creator := p.Participants.ById[wevent.Body.CreatorID]
 	// FIXIT: creator can be nil when wevent.Body.CreatorID == 0
 	if creator == nil {
-		return nil, fmt.Errorf("Unknown wevent.Body.CreatorID=%v", wevent.Body.CreatorID)
+		return nil, fmt.Errorf("unknown wevent.Body.CreatorID=%v", wevent.Body.CreatorID)
 	}
 	creatorBytes, err := hex.DecodeString(creator.PubKeyHex[2:])
 	if err != nil {
@@ -1511,12 +1510,12 @@ func (p *Poset) ReadWireInfo(wevent WireEvent) (*Event, error) {
 	}
 
 	body := EventBody{
-		Transactions:    wevent.Body.Transactions,
+		Transactions:         wevent.Body.Transactions,
 		InternalTransactions: wevent.Body.InternalTransactions,
-		Parents:         []string{selfParent, otherParent},
-		Creator:         creatorBytes,
+		Parents:              []string{selfParent, otherParent},
+		Creator:              creatorBytes,
 		Index:                wevent.Body.Index,
-		BlockSignatures: wevent.BlockSignatures(creatorBytes),
+		BlockSignatures:      wevent.BlockSignatures(creatorBytes),
 
 		selfParentIndex:      wevent.Body.SelfParentIndex,
 		otherParentCreatorID: wevent.Body.OtherParentCreatorID,
@@ -1531,8 +1530,8 @@ func (p *Poset) ReadWireInfo(wevent WireEvent) (*Event, error) {
 	}
 
 	p.logger.WithFields(logrus.Fields{
-		"event.Signature": event.Signature,
-		"wevent.Signature":  wevent.Signature,
+		"event.Signature":  event.Signature,
+		"wevent.Signature": wevent.Signature,
 	}).Debug("Return Event from ReadFromWire")
 
 	return event, nil
@@ -1549,7 +1548,7 @@ func (p *Poset) CheckBlock(block Block) error {
 		}
 	}
 	if validSignatures <= p.trustCount {
-		return fmt.Errorf("Not enough valid signatures: got %d, need %d", validSignatures, p.trustCount+1)
+		return fmt.Errorf("not enough valid signatures: got %d, need %d", validSignatures, p.trustCount+1)
 	}
 
 	p.logger.WithField("valid_signatures", validSignatures).Debug("CheckBlock")
