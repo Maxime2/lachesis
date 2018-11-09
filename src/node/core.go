@@ -26,7 +26,7 @@ type Core struct {
 	inDegrees map[string]uint64
 
 	participants *peers.Peers // [PubKey] => id
-	Head         string
+	head         string
 	Seq          int64
 
 	transactionPool             [][]byte
@@ -41,13 +41,8 @@ type Core struct {
 	maxTransactionsInEvent int
 }
 
-func NewCore(
-	id int64,
-	key *ecdsa.PrivateKey,
-	participants *peers.Peers,
-	store poset.Store,
-	commitCh chan poset.Block,
-	logger *logrus.Logger) Core {
+func NewCore(id int64, key *ecdsa.PrivateKey, participants *peers.Peers,
+	store poset.Store, commitCh chan poset.Block, logger *logrus.Logger) *Core {
 
 	if logger == nil {
 		logger = logrus.New()
@@ -61,23 +56,27 @@ func NewCore(
 		inDegrees[pubKey] = 0
 	}
 
-	core := Core{
+	p2 := poset.NewPoset(participants, store, commitCh, logEntry)
+	core := &Core{
 		id:                      id,
 		key:                     key,
-		poset:                   poset.NewPoset(participants, store, commitCh, logEntry),
+		poset:                   p2,
 		inDegrees:               inDegrees,
 		participants:            participants,
 		transactionPool:         [][]byte{},
 		internalTransactionPool: []poset.InternalTransaction{},
 		blockSignaturePool:      []poset.BlockSignature{},
 		logger:                  logEntry,
-		Head:                    "",
+		head:                    "",
 		Seq:                     -1,
 		// MaxReceiveMessageSize limitation in grpc: https://github.com/grpc/grpc-go/blob/master/clientconn.go#L96
 		// default value is 4 * 1024 * 1024 bytes
 		// we use transactions of 120 bytes in tester, thus rounding it down to 16384
 		maxTransactionsInEvent: 16384,
 	}
+
+	p2.SetCore(core)
+
 	return core
 }
 
@@ -98,6 +97,10 @@ func (c *Core) HexID() string {
 		c.hexID = fmt.Sprintf("0x%X", pubKey)
 	}
 	return c.hexID
+}
+
+func (c *Core) Head() string {
+	return c.head
 }
 
 // Heights returns map with heights for each participants
@@ -144,11 +147,11 @@ func (c *Core) SetHeadAndSeq() error {
 		seq = lastEvent.Index()
 	}
 
-	c.Head = head
+	c.head = head
 	c.Seq = seq
 
 	c.logger.WithFields(logrus.Fields{
-		"core.Head": c.Head,
+		"core.head": c.head,
 		"core.Seq":  c.Seq,
 		"is_root":   isRoot,
 	}).Debugf("SetHeadAndSeq()")
@@ -217,7 +220,7 @@ func (c *Core) InsertEvent(event poset.Event, setWireInfo bool) error {
 	}
 
 	if event.Creator() == c.HexID() {
-		c.Head = event.Hex()
+		c.head = event.Hex()
 		c.Seq = event.Index()
 	}
 
@@ -394,7 +397,7 @@ func min(a, b uint64) uint64 {
 func (c *Core) AddSelfEventBlock(otherHead string) error {
 
 	// Get flag tables from parents
-	parentEvent, errSelf := c.poset.Store.GetEvent(c.Head)
+	parentEvent, errSelf := c.poset.Store.GetEvent(c.head)
 	if errSelf != nil {
 		c.logger.Warnf("failed to get parent: %s", errSelf)
 	}
@@ -409,7 +412,7 @@ func (c *Core) AddSelfEventBlock(otherHead string) error {
 	)
 
 	if errSelf != nil {
-		flagTable = map[string]int64{c.Head: 1}
+		flagTable = map[string]int64{c.head: 1}
 	} else {
 		flagTable, err = parentEvent.GetFlagTable()
 		if err != nil {
@@ -432,7 +435,7 @@ func (c *Core) AddSelfEventBlock(otherHead string) error {
 	newHead := poset.NewEvent(batch,
 		c.internalTransactionPool,
 		c.blockSignaturePool,
-		[]string{c.Head, otherHead}, c.PubKey(), c.Seq+1, flagTable)
+		[]string{c.head, otherHead}, c.PubKey(), c.Seq+1, flagTable)
 
 	if err := c.SignAndInsertSelfEvent(newHead); err != nil {
 		return fmt.Errorf("newHead := poset.NewEventBlock: %s", err)
@@ -548,7 +551,7 @@ func (c *Core) AddBlockSignature(bs poset.BlockSignature) {
 }
 
 func (c *Core) GetHead() (poset.Event, error) {
-	return c.poset.Store.GetEvent(c.Head)
+	return c.poset.Store.GetEvent(c.head)
 }
 
 func (c *Core) GetEvent(hash string) (poset.Event, error) {
