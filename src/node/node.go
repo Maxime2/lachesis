@@ -22,7 +22,7 @@ type Node struct {
 	conf   *Config
 	logger *logrus.Entry
 
-	id       int
+	id       int64
 	core     *Core
 	coreLock sync.Mutex
 
@@ -34,8 +34,9 @@ type Node struct {
 	trans net.Transport
 	netCh <-chan net.RPC
 
-	proxy    proxy.AppProxy
-	submitCh chan []byte
+	proxy            proxy.AppProxy
+	submitCh         chan []byte
+	submitInternalCh chan poset.InternalTransaction
 
 	commitCh chan poset.Block
 
@@ -51,7 +52,7 @@ type Node struct {
 }
 
 func NewNode(conf *Config,
-	id int,
+	id int64,
 	key *ecdsa.PrivateKey,
 	participants *peers.Peers,
 	store poset.Store,
@@ -65,24 +66,30 @@ func NewNode(conf *Config,
 	commitCh := make(chan poset.Block, 400)
 	core := NewCore(id, key, pmap, store, commitCh, conf.Logger)
 
-	peerSelector := NewRandomPeerSelector(participants, localAddr)
+	pubKey := core.HexID()
+
+	peerSelector := NewRandomPeerSelector(participants, pubKey)
 
 	node := Node{
-		id:           id,
-		conf:         conf,
-		core:         &core,
-		localAddr:    localAddr,
-		logger:       conf.Logger.WithField("this_id", id),
-		peerSelector: peerSelector,
-		trans:        trans,
-		netCh:        trans.Consumer(),
-		proxy:        proxy,
-		submitCh:     proxy.SubmitCh(),
-		commitCh:     commitCh,
-		shutdownCh:   make(chan struct{}),
-		controlTimer: NewRandomControlTimer(),
-		start:        time.Now(),
+		id:               id,
+		conf:             conf,
+		core:             core,
+		localAddr:        localAddr,
+		logger:           conf.Logger.WithField("this_id", id),
+		peerSelector:     peerSelector,
+		trans:            trans,
+		netCh:            trans.Consumer(),
+		proxy:            proxy,
+		submitCh:         proxy.SubmitCh(),
+		submitInternalCh: proxy.SubmitInternalCh(),
+		commitCh:         commitCh,
+		shutdownCh:       make(chan struct{}),
+		controlTimer:     NewRandomControlTimer(),
+		start:            time.Now(),
 	}
+
+	node.logger.WithField("peers", pmap).Debug("pmap")
+	node.logger.WithField("pubKey", pubKey).Debug("pubKey")
 
 	node.needBoostrap = store.NeedBoostrap()
 
@@ -137,6 +144,9 @@ func (n *Node) Run(gossip bool) {
 	// Process SumbitTx and CommitBlock requests
 	go n.doBackgroundWork()
 
+	// make pause before gossiping test transactions to allow all nodes come up
+	time.Sleep(time.Duration(n.conf.TestDelay) * time.Second)
+
 	// Execute Node State Machine
 	for {
 		// Run different routines depending on node state
@@ -157,13 +167,13 @@ func (n *Node) Run(gossip bool) {
 func (n *Node) resetTimer() {
 	if !n.controlTimer.set {
 		ts := n.conf.HeartbeatTimeout
- 		//Slow gossip if nothing interesting to say
+		//Slow gossip if nothing interesting to say
 		if n.core.poset.PendingLoadedEvents == 0 &&
 			len(n.core.transactionPool) == 0 &&
 			len(n.core.blockSignaturePool) == 0 {
 			ts = time.Duration(time.Second)
 		}
- 		n.controlTimer.resetCh <- ts
+		n.controlTimer.resetCh <- ts
 	}
 }
 
@@ -173,6 +183,10 @@ func (n *Node) doBackgroundWork() {
 		case t := <-n.submitCh:
 			n.logger.Debug("Adding Transactions to Transaction Pool")
 			n.addTransaction(t)
+			n.resetTimer()
+		case t := <-n.submitInternalCh:
+			n.logger.Debug("Adding Internal Transaction")
+			n.addInternalTransaction(t)
 			n.resetTimer()
 		case block := <-n.commitCh:
 			n.logger.WithFields(logrus.Fields{
@@ -382,7 +396,7 @@ func (n *Node) gossip(peerAddr string, parentReturnCh chan struct{}) error {
 	return nil
 }
 
-func (n *Node) pull(peerAddr string) (syncLimit bool, otherKnownEvents map[int]int, err error) {
+func (n *Node) pull(peerAddr string) (syncLimit bool, otherKnownEvents map[int64]int64, err error) {
 	// Compute Known
 	n.coreLock.Lock()
 	knownEvents := n.core.KnownEvents()
@@ -393,15 +407,20 @@ func (n *Node) pull(peerAddr string) (syncLimit bool, otherKnownEvents map[int]i
 	resp, err := n.requestSync(peerAddr, knownEvents)
 	elapsed := time.Since(start)
 	n.logger.WithField("Duration", elapsed.Nanoseconds()).Debug("n.requestSync(peerAddr, knownEvents)")
+	// FIXIT: should we catch io.EOF error here and how we process it?
+	//	if err == io.EOF {
+	//		return false, nil, nil
+	//	}
 	if err != nil {
 		n.logger.WithField("Error", err).Error("n.requestSync(peerAddr, knownEvents)")
 		return false, nil, err
 	}
 	n.logger.WithFields(logrus.Fields{
-		"from_id":    resp.FromID,
-		"sync_limit": resp.SyncLimit,
-		"events":     len(resp.Events),
-		"known":      resp.Known,
+		"from_id":     resp.FromID,
+		"sync_limit":  resp.SyncLimit,
+		"events":      len(resp.Events),
+		"known":       resp.Known,
+		"knownEvents": knownEvents,
 	}).Debug("SyncResponse")
 
 	if resp.SyncLimit {
@@ -420,7 +439,7 @@ func (n *Node) pull(peerAddr string) (syncLimit bool, otherKnownEvents map[int]i
 	return false, resp.Known, nil
 }
 
-func (n *Node) push(peerAddr string, knownEvents map[int]int) error {
+func (n *Node) push(peerAddr string, knownEvents map[int64]int64) error {
 
 	// Check SyncLimit
 	n.coreLock.Lock()
@@ -443,7 +462,6 @@ func (n *Node) push(peerAddr string, knownEvents map[int]int) error {
 		return err
 	}
 
-
 	if len(eventDiff) > 0 {
 		// Convert to WireEvents
 		wireEvents, err := n.core.ToWire(eventDiff)
@@ -454,6 +472,7 @@ func (n *Node) push(peerAddr string, knownEvents map[int]int) error {
 
 		// Create and Send EagerSyncRequest
 		start = time.Now()
+		n.logger.WithField("wireEvents", wireEvents).Debug("Sending n.requestEagerSync.wireEvents")
 		resp2, err := n.requestEagerSync(peerAddr, wireEvents)
 		elapsed = time.Since(start)
 		n.logger.WithField("Duration", elapsed.Nanoseconds()).Debug("n.requestEagerSync(peerAddr, wireEvents)")
@@ -516,7 +535,7 @@ func (n *Node) fastForward() error {
 	return nil
 }
 
-func (n *Node) requestSync(target string, known map[int]int) (net.SyncResponse, error) {
+func (n *Node) requestSync(target string, known map[int64]int64) (net.SyncResponse, error) {
 
 	args := net.SyncRequest{
 		FromID: n.id,
@@ -525,7 +544,7 @@ func (n *Node) requestSync(target string, known map[int]int) (net.SyncResponse, 
 
 	var out net.SyncResponse
 	err := n.trans.Sync(target, &args, &out)
-
+	//n.logger.WithField("out", out).Debug("requestSync(target string, known map[int]int)")
 	return out, err
 }
 
@@ -536,6 +555,9 @@ func (n *Node) requestEagerSync(target string, events []poset.WireEvent) (net.Ea
 	}
 
 	var out net.EagerSyncResponse
+	n.logger.WithFields(logrus.Fields{
+		"target": target,
+	}).Debug("requestEagerSync(target string, events []poset.WireEvent)")
 	err := n.trans.EagerSync(target, &args, &out)
 
 	return out, err
@@ -629,6 +651,12 @@ func (n *Node) addTransaction(tx []byte) {
 	n.core.AddTransactions([][]byte{tx})
 }
 
+func (n *Node) addInternalTransaction(tx poset.InternalTransaction) {
+	n.coreLock.Lock()
+	defer n.coreLock.Unlock()
+	n.core.AddInternalTransactions([]poset.InternalTransaction{tx})
+}
+
 func (n *Node) Shutdown() {
 	if n.getState() != Shutdown {
 		// n.mqtt.FireEvent("Shutdown()", "/mq/lachesis/node")
@@ -653,11 +681,11 @@ func (n *Node) Shutdown() {
 }
 
 func (n *Node) GetStats() map[string]string {
-	toString := func(i *int) string {
+	toString := func(i *int64) string {
 		if i == nil {
 			return "nil"
 		}
-		return strconv.Itoa(*i)
+		return strconv.FormatInt(*i, 10)
 	}
 
 	timeElapsed := time.Since(n.start)
@@ -679,9 +707,9 @@ func (n *Node) GetStats() map[string]string {
 		"heartbeat":               strconv.FormatFloat(n.conf.HeartbeatTimeout.Seconds(), 'f', 2, 64),
 		"node_current":            strconv.FormatInt(time.Now().Unix(), 10),
 		"node_start":              strconv.FormatInt(n.start.Unix(), 10),
-		"last_block_index":        strconv.Itoa(n.core.GetLastBlockIndex()),
-		"consensus_events":        strconv.Itoa(consensusEvents),
-		"sync_limit":              strconv.Itoa(n.conf.SyncLimit),
+		"last_block_index":        strconv.FormatInt(n.core.GetLastBlockIndex(), 10),
+		"consensus_events":        strconv.FormatInt(consensusEvents, 10),
+		"sync_limit":              strconv.FormatInt(n.conf.SyncLimit, 10),
 		"consensus_transactions":  strconv.FormatUint(consensusTransactions, 10),
 		"undetermined_events":     strconv.Itoa(len(n.core.GetUndeterminedEvents())),
 		"transaction_pool":        strconv.Itoa(len(n.core.transactionPool)),
@@ -691,7 +719,7 @@ func (n *Node) GetStats() map[string]string {
 		"events_per_second":       strconv.FormatFloat(consensusEventsPerSecond, 'f', 2, 64),
 		"rounds_per_second":       strconv.FormatFloat(consensusRoundsPerSecond, 'f', 2, 64),
 		"round_events":            strconv.Itoa(n.core.GetLastCommittedRoundEventsCount()),
-		"id":                      strconv.Itoa(n.id),
+		"id":                      strconv.FormatInt(n.id, 10),
 		"state":                   n.getState().String(),
 	}
 	// n.mqtt.FireEvent(s, "/mq/lachesis/stats")
@@ -738,13 +766,13 @@ func (n *Node) GetLastEventFrom(participant string) (string, bool, error) {
 	return n.core.poset.Store.LastEventFrom(participant)
 }
 
-func (n *Node) GetKnownEvents() map[int]int {
+func (n *Node) GetKnownEvents() map[int64]int64 {
 	return n.core.poset.Store.KnownEvents()
 }
 
-func (n *Node) GetEvents() (map[int]int, error) {
+func (n *Node) GetEvents() (map[int64]int64, error) {
 	res := n.core.KnownEvents()
- 	return res, nil
+	return res, nil
 }
 
 func (n *Node) GetConsensusEvents() []string {
@@ -755,19 +783,19 @@ func (n *Node) GetConsensusTransactionsCount() uint64 {
 	return n.core.GetConsensusTransactionsCount()
 }
 
-func (n *Node) GetRound(roundIndex int) (poset.RoundInfo, error) {
+func (n *Node) GetRound(roundIndex int64) (poset.RoundInfo, error) {
 	return n.core.poset.Store.GetRound(roundIndex)
 }
 
-func (n *Node) GetLastRound() int {
+func (n *Node) GetLastRound() int64 {
 	return n.core.poset.Store.LastRound()
 }
 
-func (n *Node) GetRoundWitnesses(roundIndex int) []string {
+func (n *Node) GetRoundWitnesses(roundIndex int64) []string {
 	return n.core.poset.Store.RoundWitnesses(roundIndex)
 }
 
-func (n *Node) GetRoundEvents(roundIndex int) int {
+func (n *Node) GetRoundEvents(roundIndex int64) int {
 	return n.core.poset.Store.RoundEvents(roundIndex)
 }
 
@@ -775,10 +803,10 @@ func (n *Node) GetRoot(rootIndex string) (poset.Root, error) {
 	return n.core.poset.Store.GetRoot(rootIndex)
 }
 
-func (n *Node) GetBlock(blockIndex int) (poset.Block, error) {
+func (n *Node) GetBlock(blockIndex int64) (poset.Block, error) {
 	return n.core.poset.Store.GetBlock(blockIndex)
 }
 
-func (n *Node) ID() int {
+func (n *Node) ID() int64 {
 	return n.id
 }

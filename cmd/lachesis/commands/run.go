@@ -3,9 +3,12 @@ package commands
 import (
 	"fmt"
 	"time"
+	"io"
+	"os"
+
+	"github.com/andrecronje/lachesis/src/dummy"
 	"github.com/andrecronje/lachesis/src/lachesis"
 	"github.com/andrecronje/lachesis/src/log"
-	"github.com/andrecronje/lachesis/src/dummy"
 	aproxy "github.com/andrecronje/lachesis/src/proxy"
 	"github.com/andrecronje/lachesis/tester"
 	"github.com/sirupsen/logrus"
@@ -17,9 +20,9 @@ import (
 //NewRunCmd returns the command that starts a Lachesis node
 func NewRunCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "run",
-		Short:   "Run node",
-		RunE:    runLachesis,
+		Use:   "run",
+		Short: "Run node",
+		RunE:  runLachesis,
 	}
 	AddRunFlags(cmd)
 	return cmd
@@ -28,6 +31,15 @@ func NewRunCmd() *cobra.Command {
 func runSingleLachesis(config *CLIConfig) error {
 	config.Lachesis.Logger.Level = lachesis.LogLevel(config.Lachesis.LogLevel)
 	config.Lachesis.NodeConfig.Logger = config.Lachesis.Logger
+	if config.Log2file {
+		f, err := os.OpenFile(fmt.Sprintf("lachesis_%v.log", config.Lachesis.BindAddr),
+			os.O_APPEND | os.O_CREATE | os.O_TRUNC | os.O_RDWR, 0666)
+		if err != nil {
+			fmt.Printf("error opening file: %v", err)
+		}
+		mw := io.MultiWriter(os.Stdout, f)
+		config.Lachesis.NodeConfig.Logger.SetOutput(mw)
+	}
 
 	lachesis_log.NewLocal(config.Lachesis.Logger, config.Lachesis.LogLevel)
 
@@ -51,8 +63,7 @@ func runSingleLachesis(config *CLIConfig) error {
 		"lachesis.node.synclimit":  config.Lachesis.NodeConfig.SyncLimit,
 	}).Debug("RUN")
 
-
-	if !config.Standalone  {
+	if !config.Standalone {
 		p, err := aproxy.NewGrpcAppProxy(
 			config.ProxyAddr,
 			config.Lachesis.NodeConfig.HeartbeatTimeout,
@@ -65,7 +76,7 @@ func runSingleLachesis(config *CLIConfig) error {
 		}
 		config.Lachesis.Proxy = p
 	} else {
-		p := dummy.NewInmemDummyClient(config.Lachesis.Logger)
+		p := dummy.NewInmemDummyApp(config.Lachesis.Logger)
 		config.Lachesis.Proxy = p
 	}
 
@@ -83,26 +94,25 @@ func runSingleLachesis(config *CLIConfig) error {
 				fmt.Sprintf("Failed to acquire participants: %s", err),
 				1)
 		}
-		go func () {
+		go func() {
 			for {
 				time.Sleep(10 * time.Second)
 				ct := engine.Node.GetConsensusTransactionsCount()
 				// 3 - number of notes in test; 10 - number of transactions sended at once
-				if  ct >= 3 * 10 * config.Lachesis.TestN {
+				if ct >= 3*10*config.Lachesis.TestN {
 					time.Sleep(10 * time.Second)
 					engine.Node.Shutdown()
 					break
 				}
 			}
 		}()
-		go tester.PingNodesN(p.Sorted, p.ByPubKey, config.Lachesis.TestN, config.Lachesis.Logger)
+		go tester.PingNodesN(p.Sorted, p.ByPubKey, config.Lachesis.TestN, config.Lachesis.TestDelay, config.Lachesis.Logger)
 	}
 
 	engine.Run()
 
 	return nil
 }
-
 
 //AddRunFlags adds flags to the Run command
 func AddRunFlags(cmd *cobra.Command) {
@@ -112,6 +122,7 @@ func AddRunFlags(cmd *cobra.Command) {
 
 	cmd.Flags().String("datadir", config.Lachesis.DataDir, "Top-level directory for configuration and data")
 	cmd.Flags().String("log", config.Lachesis.LogLevel, "debug, info, warn, error, fatal, panic")
+	cmd.Flags().Bool("log2file", config.Log2file, "duplicate log output into file lachesis_<BindAddr>.log")
 
 	// Network
 	cmd.Flags().StringP("listen", "l", config.Lachesis.BindAddr, "Listen IP:Port for lachesis node")
@@ -133,13 +144,13 @@ func AddRunFlags(cmd *cobra.Command) {
 
 	// Node configuration
 	cmd.Flags().Duration("heartbeat", config.Lachesis.NodeConfig.HeartbeatTimeout, "Time between gossips")
-	cmd.Flags().Int("sync-limit", config.Lachesis.NodeConfig.SyncLimit, "Max number of events for sync")
+	cmd.Flags().Int64("sync-limit", config.Lachesis.NodeConfig.SyncLimit, "Max number of events for sync")
 
 	// Test
 	cmd.Flags().Bool("test", config.Lachesis.Test, "Enable testing (sends transactions to random nodes in the network)")
 	cmd.Flags().Uint64("test_n", config.Lachesis.TestN, "Number of transactions to send")
+	cmd.Flags().Uint64("test_delay", config.Lachesis.TestDelay, "Number of second to delay before sending transactions")
 }
-
 
 //Bind all flags and read the config into viper
 func bindFlagsLoadViper(cmd *cobra.Command, config *CLIConfig) error {
@@ -147,10 +158,10 @@ func bindFlagsLoadViper(cmd *cobra.Command, config *CLIConfig) error {
 	if err := viper.BindPFlags(cmd.Flags()); err != nil {
 		return err
 	}
- 	viper.SetConfigName("lachesis")              // name of config file (without extension)
+	viper.SetConfigName("lachesis")              // name of config file (without extension)
 	viper.AddConfigPath(config.Lachesis.DataDir) // search root directory
 	// viper.AddConfigPath(filepath.Join(config.Lachesis.DataDir, "lachesis")) // search root directory /config
- 	// If a config file is found, read it in.
+	// If a config file is found, read it in.
 	if err := viper.ReadInConfig(); err == nil {
 		config.Lachesis.Logger.Debugf("Using config file: %s", viper.ConfigFileUsed())
 	} else if _, ok := err.(viper.ConfigFileNotFoundError); ok {
@@ -158,7 +169,7 @@ func bindFlagsLoadViper(cmd *cobra.Command, config *CLIConfig) error {
 	} else {
 		return err
 	}
- 	return nil
+	return nil
 }
 
 func logLevel(l string) logrus.Level {

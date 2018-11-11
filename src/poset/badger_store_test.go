@@ -150,25 +150,26 @@ func TestLoadBadgerStore(t *testing.T) {
 
 func TestDBEventMethods(t *testing.T) {
 	cacheSize := 0
-	testSize := 100
+	testSize := int64(100)
 	store, participants := initBadgerStore(cacheSize, t)
 	defer removeBadgerStore(store, t)
 
 	//insert events in db directly
 	events := make(map[string][]Event)
-	topologicalIndex := 0
+	topologicalIndex := int64(0)
 	var topologicalEvents []Event
 	for _, p := range participants {
 		var items []Event
-		for k := 0; k < testSize; k++ {
+		for k := int64(0); k < testSize; k++ {
 			event := NewEvent(
 				[][]byte{[]byte(fmt.Sprintf("%s_%d", p.hex[:5], k))},
+				[]InternalTransaction{},
 				[]BlockSignature{{Validator: []byte("validator"), Index: 0, Signature: "r|s"}},
 				[]string{"", ""},
 				p.pubKey,
 				k, nil)
 			event.Sign(p.privKey)
-			event.topologicalIndex = topologicalIndex
+			event.Message.topologicalIndex = topologicalIndex
 			topologicalIndex++
 			topologicalEvents = append(topologicalEvents, event)
 
@@ -188,11 +189,11 @@ func TestDBEventMethods(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !reflect.DeepEqual(ev.Body, rev.Body) {
-				t.Fatalf("events[%s][%d].Body should be %#v, not %#v", p, k, ev.Body, rev.Body)
+			if !reflect.DeepEqual(ev.Message.Body, rev.Message.Body) {
+				t.Fatalf("events[%s][%d].Body should be %#v, not %#v", p, k, ev.Message.Body, rev.Message.Body)
 			}
-			if !reflect.DeepEqual(ev.Signature, rev.Signature) {
-				t.Fatalf("events[%s][%d].Signature should be %#v, not %#v", p, k, ev.Signature, rev.Signature)
+			if !reflect.DeepEqual(ev.Message.Signature, rev.Message.Signature) {
+				t.Fatalf("events[%s][%d].Signature should be %#v, not %#v", p, k, ev.Message.Signature, rev.Message.Signature)
 			}
 			if ver, err := rev.Verify(); err != nil && !ver {
 				t.Fatalf("failed to verify signature. err: %s", err)
@@ -217,15 +218,15 @@ func TestDBEventMethods(t *testing.T) {
 				te.Hex(),
 				dte.Hex())
 		}
-		if !reflect.DeepEqual(te.Body, dte.Body) {
+		if !reflect.DeepEqual(te.Message.Body, dte.Message.Body) {
 			t.Fatalf("dbTopologicalEvents[%d].Body should be %#v, not %#v", i,
-				te.Body,
-				dte.Body)
+				te.Message.Body,
+				dte.Message.Body)
 		}
-		if !reflect.DeepEqual(te.Signature, dte.Signature) {
+		if !reflect.DeepEqual(te.Message.Signature, dte.Message.Signature) {
 			t.Fatalf("dbTopologicalEvents[%d].Signature should be %#v, not %#v", i,
-				te.Signature,
-				dte.Signature)
+				te.Message.Signature,
+				dte.Message.Signature)
 		}
 
 		if ver, err := dte.Verify(); err != nil && !ver {
@@ -234,13 +235,13 @@ func TestDBEventMethods(t *testing.T) {
 	}
 
 	//check that participant events where correctly added
-	skipIndex := -1 //do not skip any indexes
+	skipIndex := int64(-1) //do not skip any indexes
 	for _, p := range participants {
 		pEvents, err := store.dbParticipantEvents(p.hex, skipIndex)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if l := len(pEvents); l != testSize {
+		if l := int64(len(pEvents)); l != testSize {
 			t.Fatalf("%s should have %d events, not %d", p.hex, testSize, l)
 		}
 
@@ -263,6 +264,7 @@ func TestDBRoundMethods(t *testing.T) {
 	events := make(map[string]Event)
 	for _, p := range participants {
 		event := NewEvent([][]byte{},
+			[]InternalTransaction{},
 			[]BlockSignature{},
 			[]string{"", ""},
 			p.pubKey,
@@ -326,8 +328,8 @@ func TestDBBlockMethods(t *testing.T) {
 	store, participants := initBadgerStore(cacheSize, t)
 	defer removeBadgerStore(store, t)
 
-	index := 0
-	roundReceived := 5
+	index := int64(0)
+	roundReceived := int64(5)
 	transactions := [][]byte{
 		[]byte("tx1"),
 		[]byte("tx2"),
@@ -401,6 +403,7 @@ func TestDBFrameMethods(t *testing.T) {
 	for id, p := range participants {
 		event := NewEvent(
 			[][]byte{[]byte(fmt.Sprintf("%s_%d", p.hex[:5], 0))},
+			[]InternalTransaction{},
 			[]BlockSignature{{Validator: []byte("validator"), Index: 0, Signature: "r|s"}},
 			[]string{"", ""},
 			p.pubKey,
@@ -408,7 +411,7 @@ func TestDBFrameMethods(t *testing.T) {
 		event.Sign(p.privKey)
 		events = append(events, event)
 
-		root := NewBaseRoot(id)
+		root := NewBaseRoot(int64(id))
 		roots = append(roots, root)
 	}
 	frame := Frame{
@@ -440,7 +443,7 @@ func TestDBFrameMethods(t *testing.T) {
 func TestBadgerEvents(t *testing.T) {
 	//Insert more events than can fit in cache to test retrieving from db.
 	cacheSize := 10
-	testSize := 100
+	testSize := int64(100)
 	store, participants := initBadgerStore(cacheSize, t)
 	defer removeBadgerStore(store, t)
 
@@ -448,8 +451,9 @@ func TestBadgerEvents(t *testing.T) {
 	events := make(map[string][]Event)
 	for _, p := range participants {
 		var items []Event
-		for k := 0; k < testSize; k++ {
+		for k := int64(0); k < testSize; k++ {
 			event := NewEvent([][]byte{[]byte(fmt.Sprintf("%s_%d", p.hex[:5], k))},
+				[]InternalTransaction{},
 				[]BlockSignature{{Validator: []byte("validator"), Index: 0, Signature: "r|s"}},
 				[]string{"", ""},
 				p.pubKey,
@@ -470,23 +474,23 @@ func TestBadgerEvents(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !reflect.DeepEqual(ev.Body, rev.Body) {
+			if !reflect.DeepEqual(ev.Message.Body, rev.Message.Body) {
 				t.Fatalf("events[%s][%d].Body should be %#v, not %#v", p, k, ev, rev)
 			}
-			if !reflect.DeepEqual(ev.Signature, rev.Signature) {
-				t.Fatalf("events[%s][%d].Signature should be %#v, not %#v", p, k, ev.Signature, rev.Signature)
+			if !reflect.DeepEqual(ev.Message.Signature, rev.Message.Signature) {
+				t.Fatalf("events[%s][%d].Signature should be %#v, not %#v", p, k, ev.Message.Signature, rev.Message.Signature)
 			}
 		}
 	}
 
 	//check retrieving events per participant
-	skipIndex := -1 //do not skip any indexes
+	skipIndex := int64(-1) //do not skip any indexes
 	for _, p := range participants {
 		pEvents, err := store.ParticipantEvents(p.hex, skipIndex)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if l := len(pEvents); l != testSize {
+		if l := int64(len(pEvents)); l != testSize {
 			t.Fatalf("%s should have %d events, not %d", p.hex, testSize, l)
 		}
 
@@ -513,7 +517,7 @@ func TestBadgerEvents(t *testing.T) {
 		}
 	}
 
-	expectedKnown := make(map[int]int)
+	expectedKnown := make(map[int64]int64)
 	for _, p := range participants {
 		expectedKnown[p.id] = testSize - 1
 	}
@@ -542,6 +546,7 @@ func TestBadgerRounds(t *testing.T) {
 	events := make(map[string]Event)
 	for _, p := range participants {
 		event := NewEvent([][]byte{},
+			[]InternalTransaction{},
 			[]BlockSignature{},
 			[]string{"", ""},
 			p.pubKey,
@@ -584,8 +589,8 @@ func TestBadgerBlocks(t *testing.T) {
 	store, participants := initBadgerStore(cacheSize, t)
 	defer removeBadgerStore(store, t)
 
-	index := 0
-	roundReceived := 5
+	index := int64(0)
+	roundReceived := int64(5)
 	transactions := [][]byte{
 		[]byte("tx1"),
 		[]byte("tx2"),
@@ -658,6 +663,7 @@ func TestBadgerFrames(t *testing.T) {
 	for id, p := range participants {
 		event := NewEvent(
 			[][]byte{[]byte(fmt.Sprintf("%s_%d", p.hex[:5], 0))},
+			[]InternalTransaction{},
 			[]BlockSignature{{Validator: []byte("validator"), Index: 0, Signature: "r|s"}},
 			[]string{"", ""},
 			p.pubKey,
@@ -665,7 +671,7 @@ func TestBadgerFrames(t *testing.T) {
 		event.Sign(p.privKey)
 		events = append(events, event)
 
-		root := NewBaseRoot(id)
+		root := NewBaseRoot(int64(id))
 		roots = append(roots, root)
 	}
 	frame := Frame{
