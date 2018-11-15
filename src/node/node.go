@@ -129,10 +129,10 @@ func (n *Node) Run(gossip bool) {
 	go n.controlTimer.Run(n.conf.HeartbeatTimeout)
 
 	// Execute some background work regardless of the state of the node.
-	// Process SumbitTx and CommitBlock requests
+	// Process SubmitTx and CommitBlock requests
 	go n.doBackgroundWork()
 
-	// make pause before gossiping test transactions to allow all nodes come up
+	// pause before gossiping test transactions to allow all nodes come up
 	time.Sleep(time.Duration(n.conf.TestDelay) * time.Second)
 
 	// Execute Node State Machine
@@ -330,17 +330,18 @@ func (n *Node) processFastForwardRequest(rpc net.RPC, cmd *net.FastForwardReques
 	if err != nil {
 		n.logger.WithField("error", err).Error("n.core.GetAnchorBlockWithFrame()")
 		respErr = err
-	}
-	resp.Block = block
-	resp.Frame = frame
+	} else {
+		resp.Block = block
+		resp.Frame = frame
 
-	// Get snapshot
-	snapshot, err := n.proxy.GetSnapshot(block.Index())
-	if err != nil {
-		n.logger.WithField("error", err).Error("n.proxy.GetSnapshot(block.Index())")
-		respErr = err
+		// Get snapshot
+		snapshot, err := n.proxy.GetSnapshot(block.Index())
+		if err != nil {
+			n.logger.WithField("error", err).Error("n.proxy.GetSnapshot(block.Index())")
+			respErr = err
+		}
+		resp.Snapshot = snapshot
 	}
-	resp.Snapshot = snapshot
 
 	n.logger.WithFields(logrus.Fields{
 		"Events": len(resp.Frame.Events),
